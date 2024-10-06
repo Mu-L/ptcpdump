@@ -22,12 +22,8 @@ jobs:
       with:
         go-version: '1.22.4'
 
-    - name: Set up deps
-      run: |
-        sudo apt-get install -y gcc flex bison make libelf-dev autoconf
-
     - name: Build
-      run: make build
+      run: make build-via-docker
 
     - name: Test
       run: make test
@@ -225,6 +221,15 @@ jobs:
             bash /host/testdata/test_arp.sh /host/ptcpdump/ptcpdump
             bash /host/testdata/test_icmp.sh /host/ptcpdump/ptcpdump
 
+      - name: Test netns
+        # if: ${{ (!startsWith(matrix.kernel, '5.4')) && (!startsWith(matrix.kernel, '4.')) }}
+        uses: cilium/little-vm-helper@97c89f004bd0ab4caeacfe92ebc956e13e362e6b # v0.0.19
+        with:
+          provision: 'false'
+          cmd: |
+            set -ex
+            bash /host/testdata/test_netns.sh /host/ptcpdump/ptcpdump
+
       - name: Test run sub program
         uses: cilium/little-vm-helper@97c89f004bd0ab4caeacfe92ebc956e13e362e6b # v0.0.19
         with:
@@ -246,4 +251,83 @@ jobs:
             uname -a
             cat /etc/issue
 
-            bash /host/testdata/test_nat.sh /host/ptcpdump/ptcpdump
+            for i in {1..10}; do
+              bash /host/testdata/test_nat.sh /host/ptcpdump/ptcpdump && exit 0 || sleep 1
+            done
+            exit 1
+
+      - name: build demo app
+        run: |
+          make -C testdata/gohttpapp build
+
+      - name: Test go tls keylog (unstripped)
+        uses: cilium/little-vm-helper@97c89f004bd0ab4caeacfe92ebc956e13e362e6b # v0.0.19
+        with:
+          provision: 'false'
+          cmd: |
+            set -ex
+            uname -a
+            cat /etc/issue
+
+            ls -lh /host/testdata/gohttpapp
+
+            apt update && yes | apt install -y tshark
+
+            for i in {1..10}; do
+              bash /host/testdata/test_gotls_keylog.sh /host/ptcpdump/ptcpdump gohttpapp && exit 0 || sleep 1
+            done
+            exit 1
+
+      - name: Test go tls keylog (PIE)
+        uses: cilium/little-vm-helper@97c89f004bd0ab4caeacfe92ebc956e13e362e6b # v0.0.19
+        with:
+          provision: 'false'
+          cmd: |
+            set -ex
+            uname -a
+            cat /etc/issue
+
+            ls -lh /host/testdata/gohttpapp
+
+            apt update && yes | apt install -y tshark
+
+            for i in {1..10}; do
+              bash /host/testdata/test_gotls_keylog.sh /host/ptcpdump/ptcpdump gohttpapp_pie && exit 0 || sleep 1
+            done
+            exit 1
+
+      - name: Test go tls keylog (stripped)
+        uses: cilium/little-vm-helper@97c89f004bd0ab4caeacfe92ebc956e13e362e6b # v0.0.19
+        with:
+          provision: 'false'
+          cmd: |
+            set -ex
+            uname -a
+            cat /etc/issue
+
+            ls -lh /host/testdata/gohttpapp
+
+            apt update && yes | apt install -y tshark
+
+            for i in {1..10}; do
+              bash /host/testdata/test_gotls_keylog.sh /host/ptcpdump/ptcpdump gohttpapp_stripped && exit 0 || sleep 1
+            done
+            exit 1
+
+      - name: Test go tls keylog (stripped + PIE)
+        uses: cilium/little-vm-helper@97c89f004bd0ab4caeacfe92ebc956e13e362e6b # v0.0.19
+        with:
+          provision: 'false'
+          cmd: |
+            set -ex
+            uname -a
+            cat /etc/issue
+
+            ls -lh /host/testdata/gohttpapp
+
+            apt update && yes | apt install -y tshark
+
+            for i in {1..10}; do
+              bash /host/testdata/test_gotls_keylog.sh /host/ptcpdump/ptcpdump gohttpapp_stripped_pie && exit 0 || sleep 1
+            done
+            exit 1

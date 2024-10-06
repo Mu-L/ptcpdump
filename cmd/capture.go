@@ -17,10 +17,14 @@ import (
 	"github.com/mozillazg/ptcpdump/internal/utils"
 )
 
-func capture(ctx context.Context, stop context.CancelFunc, opts Options) error {
+func capture(ctx context.Context, stop context.CancelFunc, opts *Options) error {
+	devices, err := opts.GetDevices()
+	if err != nil {
+		return err
+	}
 	btfSpec, btfPath, err := btf.LoadBTFSpec(opts.btfPath)
 	if err != nil {
-		logFatal(err)
+		return err
 	}
 	if btfPath != btf.DefaultPath {
 		log.Warnf("use BTF specs from %s", btfPath)
@@ -28,21 +32,9 @@ func capture(ctx context.Context, stop context.CancelFunc, opts Options) error {
 
 	log.Info("start process and container cache")
 	pcache := metadata.NewProcessCache()
-	cc, _ := applyContainerFilter(ctx, &opts)
+	cc, _ := applyContainerFilter(ctx, opts)
 	if cc != nil {
 		pcache.WithContainerCache(cc)
-	}
-
-	var subProcessFinished <-chan struct{}
-	var subProcessLoaderPid int
-	if len(opts.subProgArgs) > 0 {
-		log.Info("start sub process loader")
-		subProcessLoaderPid, subProcessFinished, err = utils.StartSubProcessLoader(ctx, os.Args[0], opts.subProgArgs)
-		if err != nil {
-			return err
-		}
-		opts.pids = []uint{uint(subProcessLoaderPid)}
-		opts.followForks = true
 	}
 
 	writers, fcloser, err := getWriters(opts, pcache)
@@ -57,20 +49,35 @@ func capture(ctx context.Context, stop context.CancelFunc, opts Options) error {
 			fcloser()
 		}
 	}()
+	gcr, err := getGoKeyLogEventConsumer(opts, writers)
+	if err != nil {
+		return err
+	}
+
+	var subProcessFinished <-chan struct{}
+	var subProcessLoaderPid int
+	if len(opts.subProgArgs) > 0 {
+		log.Info("start sub process loader")
+		subProcessLoaderPid, subProcessFinished, err = utils.StartSubProcessLoader(ctx, os.Args[0], opts.subProgArgs)
+		if err != nil {
+			return err
+		}
+		opts.pids = []uint{uint(subProcessLoaderPid)}
+		opts.followForks = true
+	}
+
 	pcache.Start(ctx)
 
 	log.Info("start get current connections")
 	conns := getCurrentConnects(ctx, pcache, opts)
 
 	log.Info("start attach hooks")
-	bf, err := attachHooks(btfSpec, conns, opts)
+	bf, closers, err := attachHooks(btfSpec, conns, opts)
 	if err != nil {
-		if bf != nil {
-			bf.Close()
-		}
+		runClosers(closers)
 		return err
 	}
-	defer bf.Close()
+	defer runClosers(closers)
 
 	packetEvensCh, err := bf.PullPacketEvents(ctx, int(opts.eventChanSize), int(opts.snapshotLength))
 	if err != nil {
@@ -84,6 +91,10 @@ func capture(ctx context.Context, stop context.CancelFunc, opts Options) error {
 	if err != nil {
 		return err
 	}
+	goTlsKeyLogEventsCh, err := bf.PullGoKeyLogEvents(ctx, int(opts.eventChanSize))
+	if err != nil {
+		return err
+	}
 
 	headerTips(opts)
 	log.Info("capturing...")
@@ -92,12 +103,11 @@ func capture(ctx context.Context, stop context.CancelFunc, opts Options) error {
 	go execConsumer.Start(ctx, execEvensCh)
 	exitConsumer := consumer.NewExitEventConsumer(pcache, 10)
 	go exitConsumer.Start(ctx, exitEvensCh)
+	go gcr.Start(ctx, goTlsKeyLogEventsCh)
 
 	var stopByInternal bool
-	packetConsumer := consumer.NewPacketEventConsumer(writers)
-	if opts.delayBeforeHandlePacketEvents > 0 {
-		time.Sleep(opts.delayBeforeHandlePacketEvents)
-	}
+	packetConsumer := consumer.NewPacketEventConsumer(writers, devices).
+		WithDelay(opts.delayBeforeHandlePacketEvents)
 	if subProcessLoaderPid > 0 {
 		go func() {
 			log.Infof("notify loader %d to start sub process", subProcessLoaderPid)
@@ -106,12 +116,19 @@ func capture(ctx context.Context, stop context.CancelFunc, opts Options) error {
 			log.Info("sub process exited")
 			time.Sleep(time.Second * 3)
 			stopByInternal = true
+			time.Sleep(opts.delayBeforeHandlePacketEvents)
 			stop()
 		}()
 	}
 
 	go printCaptureCountBySignal(ctx, bf, packetConsumer)
 	packetConsumer.Start(ctx, packetEvensCh, opts.maxPacketCount)
+	defer func() {
+		packetConsumer.Stop()
+		execConsumer.Stop()
+		exitConsumer.Stop()
+		gcr.Stop()
+	}()
 
 	if !stopByInternal && ctx.Err() != nil {
 		fmt.Fprint(os.Stderr, "\n")
@@ -122,7 +139,7 @@ func capture(ctx context.Context, stop context.CancelFunc, opts Options) error {
 	return nil
 }
 
-func headerTips(opts Options) {
+func headerTips(opts *Options) {
 	interfaces := opts.ifaces[0]
 	if len(opts.ifaces) > 1 {
 		interfaces = fmt.Sprintf("[%s]", strings.Join(opts.ifaces, ", "))
@@ -163,7 +180,7 @@ func getCaptureCounts(bf *bpf.BPF, c *consumer.PacketEventConsumer) []string {
 	return ret
 }
 
-func getCurrentConnects(ctx context.Context, pcache *metadata.ProcessCache, opts Options) []metadata.Connection {
+func getCurrentConnects(ctx context.Context, pcache *metadata.ProcessCache, opts *Options) []metadata.Connection {
 	var pids []int
 	var filterPid bool
 

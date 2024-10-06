@@ -2,6 +2,7 @@
 //  +build ignore
 
 #include "custom.h"
+#include "gotls.h"
 #include "vmlinux.h"
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_endian.h>
@@ -1050,4 +1051,67 @@ SEC("tc")
 int tc_egress(struct __sk_buff *skb) {
     handle_tc(skb, true);
     return TC_ACT_UNSPEC;
+}
+
+SEC("uprobe/go:crypto/tls.(*Config).writeKeyLog")
+int uprobe__go_builtin__tls__write_key_log(struct pt_regs *ctx) {
+    struct go_keylog_buf_t buf = {0};
+    u32 smp_id = bpf_get_smp_processor_id();
+
+    read_go_arg_into(&buf.label_len_ptr, ctx, 3);
+    read_go_arg_into(&buf.random_len_ptr, ctx, 5);
+    read_go_arg_into(&buf.secret_len_ptr, ctx, 8);
+
+    read_go_arg_into(&buf.label_ptr, ctx, 2);
+    read_go_arg_into(&buf.random_ptr, ctx, 4);
+    read_go_arg_into(&buf.secret_ptr, ctx, 7);
+
+    bpf_map_update_elem(&go_keylog_buf_storage, &smp_id, &buf, BPF_ANY);
+
+    return 0;
+}
+
+SEC("uprobe/go:crypto/tls.(*Config).writeKeyLog/ret")
+int uprobe__go_builtin__tls__write_key_log__ret(struct pt_regs *ctx) {
+    struct go_keylog_buf_t *buf;
+    struct go_keylog_event_t event = {0};
+    int ret;
+
+    u32 smp_id = bpf_get_smp_processor_id();
+    buf = bpf_map_lookup_elem(&go_keylog_buf_storage, &smp_id);
+    if (!buf) {
+        //        debug_log("no buf");
+        return 0;
+    }
+
+    bpf_probe_read_kernel(&event.label_len, sizeof(event.label_len), &(buf->label_len_ptr));
+    bpf_probe_read_kernel(&event.client_random_len, sizeof(event.client_random_len), &(buf->random_len_ptr));
+    bpf_probe_read_kernel(&event.secret_len, sizeof(event.secret_len), &(buf->secret_len_ptr));
+    if (event.label_len == 0 && event.client_random_len == 0 && event.secret_len == 0) {
+        //                debug_log("go tls read filed, label_len: %d, client_random_len: %d, secret_len: %d",
+        //                            event.label_len, event.client_random_len, event.secret_len );
+        return 0;
+    }
+
+    ret = bpf_probe_read_user(&event.label, sizeof(event.label), (void *)(buf->label_ptr));
+    if (ret < 0) {
+        //        debug_log("go labels, ret: %d", ret);
+    }
+    ret = bpf_probe_read_user(&event.client_random, sizeof(event.client_random), (void *)(buf->random_ptr));
+    if (ret < 0) {
+        //        debug_log("go random, ret: %d", ret);
+    }
+    ret = bpf_probe_read_user(&event.secret, sizeof(event.secret), (void *)(buf->secret_ptr));
+    if (ret < 0) {
+        //        debug_log("go secret, ret: %d", ret);
+    }
+    //        debug_log("go label_len: %d, client_random_len: %d, secret_len: %d", event.label_len,
+    //                event.client_random_len, event.secret_len);
+    //    debug_log("go label: %x, client_random: %x, secret: %x", event.label,
+    //                event.client_random, event.secret);
+    ret = bpf_perf_event_output(ctx, &go_keylog_events, BPF_F_CURRENT_CPU, &event, sizeof(event));
+    if (ret < 0) {
+        //                debug_log("go tls: per event failed, %d", ret);
+    }
+    return 0;
 }

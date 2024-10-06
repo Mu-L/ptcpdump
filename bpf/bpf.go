@@ -19,7 +19,7 @@ import (
 )
 
 // $TARGET is set by the Makefile
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -no-strip -target $TARGET -type gconfig_t -type packet_event_t -type exec_event_t -type exit_event_t -type flow_pid_key_t -type process_meta_t -type packet_event_meta_t Bpf ./ptcpdump.c -- -I./headers -I./headers/$TARGET -I. -Wall
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -no-strip -target $TARGET -type gconfig_t -type packet_event_t -type exec_event_t -type exit_event_t -type flow_pid_key_t -type process_meta_t -type packet_event_meta_t -type go_keylog_event_t Bpf ./ptcpdump.c -- -I./headers -I./headers/$TARGET -I. -Wall
 
 const tcFilterName = "ptcpdump"
 const logSzie = ebpf.DefaultVerifierLogSize * 64
@@ -312,40 +312,33 @@ func (b *BPF) AttachTracepoints() error {
 	return nil
 }
 
-func (b *BPF) AttachTcHooks(ifindex int, egress, ingress bool) error {
+func (b *BPF) AttachTcHooks(ifindex int, egress, ingress bool) ([]func(), error) {
+	var closeFuncs []func()
 	closeFunc, err := ensureTcQdisc(ifindex)
 	if err != nil {
-		if closeFunc != nil {
-			closeFunc()
-		}
-		return fmt.Errorf("attach tc hooks: %w", err)
+		closeFuncs = append(closeFuncs, closeFunc)
+		return closeFuncs, fmt.Errorf("attach tc hooks: %w", err)
 	}
 
 	if egress {
 		c1, err := attachTcHook(ifindex, b.objs.TcEgress, false)
 		if err != nil {
-			if c1 != nil {
-				c1()
-			}
-			closeFunc()
-			return fmt.Errorf("attach tc hooks: %w", err)
+			closeFuncs = append(closeFuncs, c1)
+			return closeFuncs, fmt.Errorf("attach tc hooks: %w", err)
 		}
-		b.closeFuncs = append(b.closeFuncs, c1)
+		closeFuncs = append(closeFuncs, c1)
 	}
 
 	if ingress {
 		c2, err := attachTcHook(ifindex, b.objs.TcIngress, true)
 		if err != nil {
-			if c2 != nil {
-				c2()
-			}
-			closeFunc()
-			return fmt.Errorf("attach tc hooks: %w", err)
+			closeFuncs = append(closeFuncs, c2)
+			return closeFuncs, fmt.Errorf("attach tc hooks: %w", err)
 		}
-		b.closeFuncs = append(b.closeFuncs, c2)
+		closeFuncs = append(closeFuncs, c2)
 	}
 
-	return nil
+	return closeFuncs, nil
 }
 
 func (opts Options) attachForks() bool {

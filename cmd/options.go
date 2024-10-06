@@ -2,8 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/mozillazg/ptcpdump/internal/dev"
+	"github.com/mozillazg/ptcpdump/internal/log"
+	"github.com/mozillazg/ptcpdump/internal/utils"
 	"github.com/mozillazg/ptcpdump/internal/writer"
 	"github.com/x-way/pktdump"
+	"os"
 	"strings"
 	"time"
 
@@ -60,11 +64,17 @@ type Options struct {
 	criRuntimeEndpoint string
 	btfPath            string
 
+	writeTLSKeyLogPath     string
+	embedTLSKeyLogToPcapng bool
+
 	subProgArgs []string
 
 	mntnsIds []uint32
 	netnsIds []uint32
 	pidnsIds []uint32
+
+	netNsPaths []string
+	devices    *dev.Interfaces
 }
 
 func (o Options) filterByContainer() bool {
@@ -172,4 +182,57 @@ func (o Options) applyToStdoutWriter(w *writer.StdoutWriter) {
 		w.DataStyle = pktdump.ContentStyleASCII
 		break
 	}
+}
+
+func (o Options) shouldEnableGoTLSHooks() bool {
+	if len(o.subProgArgs) == 0 {
+		return false
+	}
+	if o.getWriteTLSKeyLogPath() != "" || o.embedTLSKeyLogToPcapng {
+		return true
+	}
+	return false
+}
+
+func (o Options) getWriteTLSKeyLogPath() string {
+	if o.writeTLSKeyLogPath != "" {
+		return o.writeTLSKeyLogPath
+	}
+	return os.Getenv("SSLKEYLOGFILE")
+}
+
+func (o *Options) GetDevices() (*dev.Interfaces, error) {
+	if o.devices != nil {
+		return o.devices, nil
+	}
+
+	if len(o.netNsPaths) == 0 {
+		o.netNsPaths = append(o.netNsPaths, "")
+	}
+	if o.netNsPaths[0] == "any" {
+		o.netNsPaths = []string{""}
+		ps, err := utils.GetAllNamedNetNsName()
+		if err != nil {
+			return nil, err
+		}
+		o.netNsPaths = append(o.netNsPaths, ps...)
+	}
+	log.Infof("o.netNsPaths=%v", o.netNsPaths)
+
+	devices := dev.NewInterfaces()
+	ifaces := o.ifaces
+	if len(ifaces) > 0 && ifaces[0] == "any" {
+		ifaces = nil
+	}
+
+	for _, p := range o.netNsPaths {
+		devs, err := dev.GetDevices(ifaces, p)
+		if err != nil {
+			return nil, err
+		}
+		devices.Merge(devs)
+	}
+
+	o.devices = devices
+	return o.devices, nil
 }

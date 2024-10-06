@@ -18,8 +18,11 @@ require (
 )
 
 require (
+	github.com/mandiant/GoReSym v1.7.2-0.20240819162932-534ca84b42d5
 	github.com/smira/go-xz v0.1.0
 	github.com/stretchr/testify v1.9.0
+	github.com/vishvananda/netns v0.0.0-20211101163701-50045581ed74
+	golang.org/x/arch v0.10.0
 	k8s.io/klog/v2 v2.130.1
 )
 
@@ -28,6 +31,7 @@ require (
 	github.com/containerd/typeurl v1.0.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/docker/distribution v2.8.2+incompatible // indirect
+	github.com/elliotchance/orderedmap v1.4.0 // indirect
 	github.com/gogo/googleapis v1.4.1 // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/opencontainers/runc v1.1.14 // indirect
@@ -36,6 +40,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.31.0-alpha.3 // indirect
 	k8s.io/apiserver v0.26.2 // indirect
+	rsc.io/binaryregexp v0.2.0 // indirect
 )
 
 require (
@@ -82,7 +87,7 @@ require (
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	golang.org/x/exp v0.0.0-20230224173230-c95f2b4c22f2 // indirect
+	golang.org/x/exp v0.0.0-20230811145659-89c5cff77bcb // indirect
 	golang.org/x/net v0.26.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
@@ -98,10 +103,11 @@ replace (
 	github.com/Microsoft/hcsshim => github.com/Microsoft/hcsshim v0.8.26
 	github.com/Microsoft/hcsshim/test => github.com/Microsoft/hcsshim/test v0.0.0-20210514012740-eba372547321
 	github.com/containerd/containerd => github.com/containerd/containerd v1.4.13
-	// github.com/docker/docker => github.com/docker/docker v20.10.12+incompatible
 	github.com/docker/docker => github.com/docker/docker v24.0.9+incompatible
-	github.com/gopacket/gopacket => github.com/mozillazg/gopacket v0.0.0-20240602032747-2b08f0c63614
-	github.com/x-way/pktdump => github.com/mozillazg/pktdump v0.0.8
+	github.com/gopacket/gopacket => github.com/mozillazg/gopacket v0.0.0-20241005073024-5750600e7922
+	// github.com/gopacket/gopacket => ../../gopacket/gopacket
+	github.com/x-way/pktdump => github.com/mozillazg/pktdump v0.0.9-0.20241003022253-cbafa8b6312d
+	// github.com/x-way/pktdump => ../../x-way/pktdump
 
 	// https://github.com/kubernetes/kubernetes/blob/release-1.24/go.mod
 	go.opencensus.io => go.opencensus.io v0.23.0
